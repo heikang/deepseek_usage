@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token 账户用量查看器</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f5f7fa; --card: #fff; --primary: #4f6ef7; --primary-light: #eef1ff;
+    --text: #1a1a2e; --text-secondary: #6b7280; --border: #e5e7eb;
+    --shadow: 0 1px 3px rgba(0,0,0,.08); --radius: 12px; --radius-sm: 8px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh; padding: 24px;
+  }
+  .container { max-width: 1500px; margin: 0 auto; }
+
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 28px; flex-wrap: wrap; gap: 12px;
+  }
+  .header h1 { font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  .file-info {
+    font-size: 13px; color: var(--text-secondary); background: var(--card);
+    padding: 8px 16px; border-radius: 20px; box-shadow: var(--shadow);
+  }
+
+  .upload-area {
+    background: var(--card); border: 2px dashed var(--border); border-radius: var(--radius);
+    padding: 48px 24px; text-align: center; cursor: pointer; transition: all .25s; margin-bottom: 24px;
+  }
+  .upload-area:hover, .upload-area.dragover { border-color: var(--primary); background: var(--primary-light); }
+  .upload-area .icon { font-size: 48px; color: var(--primary); margin-bottom: 12px; }
+  .upload-area p { color: var(--text-secondary); font-size: 15px; }
+  .upload-area .sub { font-size: 13px; margin-top: 6px; }
+  .upload-area input[type="file"] { display: none; }
+
+  .tabs {
+    display: flex; gap: 4px; background: var(--card); border-radius: var(--radius-sm);
+    padding: 4px; box-shadow: var(--shadow); margin-bottom: 20px;
+  }
+  .tab-btn {
+    flex: 1; padding: 10px 18px; border: none; background: transparent;
+    border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;
+    color: var(--text-secondary); transition: all .2s;
+  }
+  .tab-btn:hover { background: #f3f4f6; }
+  .tab-btn.active { background: var(--primary); color: #fff; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .summary-row {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px; margin-bottom: 20px;
+  }
+  .summary-card {
+    background: var(--card); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow);
+  }
+  .summary-card .label { font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; }
+  .summary-card .value { font-size: 22px; font-weight: 700; }
+  .summary-card .value.highlight { color: var(--primary); }
+
+  /* Key Section (accordion) */
+  .key-section {
+    background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+    margin-bottom: 16px; overflow: hidden;
+  }
+  .key-header {
+    display: flex; align-items: center; padding: 14px 20px;
+    cursor: pointer; transition: background .2s; gap: 12px; flex-wrap: wrap;
+    -webkit-user-select: none; user-select: none;
+  }
+  .key-header:hover { background: #f9fafb; }
+  .key-header .arrow { font-size: 12px; color: var(--text-secondary); transition: transform .2s; width: 14px; }
+  .key-header.open .arrow { transform: rotate(90deg); }
+  .key-header .kname { font-weight: 600; font-size: 15px; min-width: 70px; }
+  .key-header .kbadge {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--primary-light); color: var(--primary);
+  }
+  .key-header .kstat {
+    display: flex; gap: 14px; margin-left: auto; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap;
+  }
+  .key-header .kstat span { white-space: nowrap; }
+  .key-header .kstat strong { color: var(--text); }
+  .key-body { display: none; padding: 0 20px 20px; }
+  .key-body.open { display: block; }
+
+  .chart-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;
+  }
+  .chart-grid .full { grid-column: 1 / -1; }
+  .chart-card {
+    background: var(--card); border-radius: var(--radius-sm); padding: 16px;
+    box-shadow: var(--shadow); border: 1px solid var(--border);
+  }
+  .chart-card h4 { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 10px; }
+  .chart-card .chart-box { position: relative; width: 100%; height: 200px; }
+  .chart-card .chart-box.tall { height: 260px; }
+  .chart-card .chart-box.xtall { height: 320px; }
+
+  .section-title {
+    font-size: 13px; font-weight: 600; color: var(--text-secondary);
+    padding: 10px 0 6px; margin-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+
+  .model-sub-charts {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  }
+
+  @media (max-width: 1000px) {
+    .chart-grid, .model-sub-charts { grid-template-columns: 1fr; }
+  }
+
+  .footer { text-align: center; color: var(--text-secondary); font-size: 13px; margin-top: 32px; padding: 16px; }
+
+  .loading {
+    display: flex; align-items: center; justify-content: center; padding: 40px; gap: 12px; color: var(--text-secondary);
+  }
+  .spinner {
+    width: 24px; height: 24px; border: 3px solid var(--border);
+    border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .copy-key-btn {
+    background: none; border: 1px solid var(--border); border-radius: 4px;
+    padding: 2px 8px; font-size: 11px; cursor: pointer; color: var(--text-secondary);
+  }
+  .copy-key-btn:hover { background: var(--primary-light); color: var(--primary); }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1><span>📊</span> Token 账户用量查看器</h1>
+    <span class="file-info" id="fileInfo">未加载文件</span>
+  </div>
+  <div class="upload-area" id="uploadArea">
+    <div class="icon">📁</div>
+    <p>点击选择或拖拽 ZIP 文件到此处</p>
+    <p class="sub">支持 DeepSeek 账户用量导出的 zip 文件</p>
+    <input type="file" id="fileInput" accept=".zip">
+  </div>
+  <div id="content" style="display:none;">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="cost">💰 总费用概览</button>
+      <button class="tab-btn" data-tab="amount">🔑 API Key 用量明细</button>
+    </div>
+    <!-- Cost Tab -->
+    <div class="tab-content active" id="tabCost">
+      <div class="summary-row" id="costSummary"></div>
+      <div class="chart-grid" id="costCharts"></div>
+    </div>
+    <!-- Amount Tab -->
+    <div class="tab-content" id="tabAmount">
+      <div class="summary-row" id="amountSummary"></div>
+      <div id="amountKeyContainer"></div>
+    </div>
+  </div>
+  <div class="footer">完全离线运行 · 数据仅存储在本地浏览器中</div>
+</div>
+<script>
+// ============================================================
+//  Utility
+// ============================================================
+const fmtNum = (n) => {
+  if (n === undefined || n === null) return '-';
+  return Number(n).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+};
+const fmtInt = (n) => Number(n).toLocaleString('zh-CN');
+const fmtCost = (n) => Number(n).toFixed(4);
+
+function parseCSV(text) {
+  return Papa.parse(text.replace(/^\uFEFF/, ''), {
+    header: true, skipEmptyLines: true,
+    transformHeader: h => h.trim(), transform: v => v.trim(),
+  }).data;
+}
+
+const KEY_COLORS = ['#4f6ef7','#f97316','#22c55e','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f59e0b','#6366f1','#84cc16'];
+
+function destroyChart(inst) { if (inst) inst.destroy(); }
+
+// Tooltip label helpers with daily percentage (for stacked bar charts)
+function pctLabel(ctx, fmt) {
+  const val = ctx.parsed.y;
+  if (val === 0) return null; // hide zero-value labels
+  const total = ctx.chart.data.datasets.reduce((s, ds) => s + (Number(ds.data[ctx.dataIndex]) || 0), 0);
+  const pct = total > 0 ? (val / total * 100).toFixed(1) : '0.0';
+  const fv = fmt === 'cost' ? `¥${fmtCost(val)}` : fmtInt(val);
+  return `${ctx.dataset.label}: ${fv} (${pct}%)`;
+}
+function pTL(ctx) { return pctLabel(ctx, 'int'); }
+function pCL(ctx) { return pctLabel(ctx, 'cost'); }
+
+// ============================================================
+//  Data aggregation
+// ============================================================
+function buildKeyData(amountData) {
+  const map = {};
+  // Also build cost data per model per day from amount.csv
+  // cost = price * amount (for token types, not request_count)
+  amountData.forEach(d => {
+    const name = d.api_key_name || '(未命名)';
+    if (!map[name]) {
+      map[name] = {
+        name, api_key: d.api_key || '-',
+        dailyModel: {},   // date->model->{hit,miss,output,requests}
+        dailyCost: {},    // date->model->cost
+        dailyTotalCost: {}, // date->total cost
+        models: new Set(),
+        totalHit: 0, totalMiss: 0, totalOutput: 0, totalRequests: 0, totalCost: 0,
+      };
+    }
+    const kd = map[name];
+    kd.api_key = d.api_key || kd.api_key;
+    kd.models.add(d.model);
+    // Token counts
+    if (!kd.dailyModel[d.utc_date]) kd.dailyModel[d.utc_date] = {};
+    if (!kd.dailyModel[d.utc_date][d.model]) {
+      kd.dailyModel[d.utc_date][d.model] = { hit: 0, miss: 0, output: 0, requests: 0 };
+    }
+    const dm = kd.dailyModel[d.utc_date][d.model];
+    const amt = parseInt(d.amount || 0);
+    if (d.type === 'input_cache_hit_tokens') { dm.hit += amt; kd.totalHit += amt; }
+    else if (d.type === 'input_cache_miss_tokens') { dm.miss += amt; kd.totalMiss += amt; }
+    else if (d.type === 'output_tokens') { dm.output += amt; kd.totalOutput += amt; }
+    else if (d.type === 'request_count') { dm.requests += amt; kd.totalRequests += amt; }
+    // Cost calculation
+    if (d.type !== 'request_count' && d.price) {
+      const cost = parseFloat(d.price) * amt;
+      if (!kd.dailyCost[d.utc_date]) kd.dailyCost[d.utc_date] = {};
+      if (!kd.dailyCost[d.utc_date][d.model]) kd.dailyCost[d.utc_date][d.model] = 0;
+      kd.dailyCost[d.utc_date][d.model] += cost;
+      if (!kd.dailyTotalCost[d.utc_date]) kd.dailyTotalCost[d.utc_date] = 0;
+      kd.dailyTotalCost[d.utc_date] += cost;
+      kd.totalCost += cost;
+    }
+  });
+  return Object.values(map).sort((a, b) => totalTokens(b) - totalTokens(a));
+}
+
+function totalTokens(kd) { return kd.totalHit + kd.totalMiss + kd.totalOutput; }
+function cacheHitRate(kd) { const t = totalTokens(kd); return t === 0 ? 0 : (kd.totalHit / t * 100); }
+
+function getColorFor(name, idx) { return KEY_COLORS[(idx !== undefined ? idx : 0) % KEY_COLORS.length]; }
+
+function getAllDates(keys) {
+  const set = new Set();
+  keys.forEach(k => Object.keys(k.dailyModel).forEach(d => set.add(d)));
+  return [...set].sort();
+}
+
+// ============================================================
+//  Render Cost Tab — Aggregated overview charts
+// ============================================================
+let costCharts = [];
+
+function renderCost() {
+  const summary = document.getElementById('costSummary');
+  const container = document.getElementById('costCharts');
+  const keys = buildKeyData(amountData);
+  costCharts.forEach(destroyChart);
+  costCharts = [];
+
+  const gHit = keys.reduce((s, k) => s + k.totalHit, 0);
+  const gMiss = keys.reduce((s, k) => s + k.totalMiss, 0);
+  const gOut = keys.reduce((s, k) => s + k.totalOutput, 0);
+  const gReq = keys.reduce((s, k) => s + k.totalRequests, 0);
+  const gTok = gHit + gMiss + gOut;
+  const gCost = keys.reduce((s, k) => s + k.totalCost, 0);
+  const gRate = gTok === 0 ? 0 : (gHit / gTok * 100);
+
+  summary.innerHTML = `
+    <div class="summary-card"><div class="label">API Key 数</div><div class="value highlight">${keys.length}</div></div>
+    <div class="summary-card"><div class="label">总 Token</div><div class="value">${fmtInt(gTok)}</div></div>
+    <div class="summary-card"><div class="label">总费用 (≈CNY)</div><div class="value highlight">${fmtCost(gCost)}</div></div>
+    <div class="summary-card"><div class="label">总请求数</div><div class="value">${fmtInt(gReq)}</div></div>
+    <div class="summary-card"><div class="label">缓存命中率</div><div class="value" style="color:#22c55e">${gRate.toFixed(1)}%</div></div>
+  `;
+
+  const dates = getAllDates(keys);
+  const keyColorMap = {};
+  keys.forEach((k, i) => { keyColorMap[k.name] = KEY_COLORS[i % KEY_COLORS.length]; });
+
+  // ---------- Chart 1: Daily tokens by key (stacked bar) ----------
+  container.innerHTML = `
+    <div class="chart-card full">
+      <h4>📈 每日各 Key Token 用量（颜色区分 Key）</h4>
+      <div class="chart-box xtall"><canvas id="c_dailyTok"></canvas></div>
+    </div>
+    <div class="chart-card full">
+      <h4>💰 每日各 Key 费用（颜色区分 Key）</h4>
+      <div class="chart-box xtall"><canvas id="c_dailyCost"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h4>🧩 各 Key Token 占比</h4>
+      <div class="chart-box tall"><canvas id="c_tokPie"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h4>🧩 各 Key 费用占比</h4>
+      <div class="chart-box tall"><canvas id="c_costPie"></canvas></div>
+    </div>
+    <div class="chart-card full">
+      <h4>📊 各 Key 缓存命中率对比</h4>
+      <div class="chart-box"><canvas id="c_cacheBar"></canvas></div>
+    </div>
+    <div class="chart-card full">
+      <h4>📈 每日缓存命中率趋势（颜色区分 Key）</h4>
+      <div class="chart-box xtall"><canvas id="c_cacheTrend"></canvas></div>
+    </div>
+  `;
+
+  // Chart 1: Daily tokens by key
+  const ctx1 = document.getElementById('c_dailyTok').getContext('2d');
+  costCharts.push(new Chart(ctx1, {
+    type: 'bar',
+    data: {
+      labels: dates,
+      datasets: keys.map((k, i) => ({
+        label: k.name,
+        data: dates.map(d => {
+          let t = 0;
+          Object.entries(k.dailyModel[d] || {}).forEach(([, v]) => { t += v.hit + v.miss + v.output; });
+          return t;
+        }),
+        backgroundColor: KEY_COLORS[i % KEY_COLORS.length] + 'CC',
+        borderColor: KEY_COLORS[i % KEY_COLORS.length],
+        borderWidth: 1,
+      }))
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 } } },
+        y: { stacked: true, beginAtZero: true, ticks: { font: { size: 10 }, callback: v => fmtInt(v) }, grid: { color: '#f0f0f0' } }
+      },
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, padding: 10, font: { size: 11 } } },
+        tooltip: { mode: 'index', intersect: false, backgroundColor: 'rgba(0,0,0,0.8)', callbacks: { label: pTL } }
+      }
+    }
+  }));
+
+  // Chart 2: Daily cost by key
+  const ctx2 = document.getElementById('c_dailyCost').getContext('2d');
+  costCharts.push(new Chart(ctx2, {
+    type: 'bar',
+    data: {
+      labels: dates,
+      datasets: keys.map((k, i) => ({
+        label: k.name,
+        data: dates.map(d => k.dailyTotalCost[d] || 0),
+        backgroundColor: KEY_COLORS[i % KEY_COLORS.length] + 'CC',
+        borderColor: KEY_COLORS[i % KEY_COLORS.length],
+        borderWidth: 1,
+      }))
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 } } },
+        y: { stacked: true, beginAtZero: true, ticks: { font: { size: 10 }, callback: v => fmtCost(v) }, grid: { color: '#f0f0f0' } }
+      },
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, padding: 10, font: { size: 11 } } },
+        tooltip: { mode: 'index', intersect: false, backgroundColor: 'rgba(0,0,0,0.8)', callbacks: { label: pCL } }
+      }
+    }
+  }));
+
+  // Chart 3: Token distribution pie
+  const ctx3 = document.getElementById('c_tokPie').getContext('2d');
+  costCharts.push(new Chart(ctx3, {
+    type: 'doughnut',
+    data: {
+      labels: keys.map(k => k.name),
+      datasets: [{ data: keys.map(k => totalTokens(k)), backgroundColor: keys.map((_, i) => KEY_COLORS[i % KEY_COLORS.length]), borderWidth: 2, borderColor: '#fff' }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '55%',
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, padding: 8, font: { size: 10 } } },
+        tooltip: { backgroundColor: 'rgba(0,0,0,0.8)', callbacks: { label: ctx => { const t = ctx.dataset.data.reduce((a,b)=>a+b,0); return `${ctx.label}: ${fmtInt(ctx.parsed)} (${(ctx.parsed/t*100).toFixed(1)}%)`; } } }
+      }
+    }
+  }));
+
+  // Chart 4: Cost distribution pie
+  const ctx4 = document.getElementById('c_costPie').getContext('2d');
+  costCharts.push(new Chart(ctx4, {
+    type: 'doughnut',
+    data: {
+      labels: keys.map(k => k.name),
+      datasets: [{ data: keys.map(k => k.totalCost), backgroundColor: keys.map((_, i) => KEY_COLORS[i % KEY_COLORS.length]), borderWidth: 2, borderColor: '#fff' }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '55%',
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, padding: 8, font: { size: 10 } } },
+        tooltip: { backgroundColor: 'rgba(0,0,0,0.8)', callbacks: { label: ctx => { const t = ctx.dataset.data.reduce((a,b)=>a+b,0); return `${ctx.label}: ¥${fmtCost(ctx.parsed)} (${(ctx.parsed/t*100).toFixed(1)}%)`; } } }
+      }
+    }
+  }));
+
+  // Chart 5: Cache hit rate by key
+  const ctx5 = document.getElementById('c_cacheBar').getContext('2d');
+  const rateData = keys.map(k => cacheHitRate(k));
+  costCharts.push(new Chart(ctx5, {
+    type: 'bar',
+    data: {
+      labels: keys.map(k => k.name),
+      datasets: [{
+        label: '缓存命中率',
+        data: rateData,
+        backgroundColor: rateData.map(v => v > 80 ? '#22c55e' : v > 50 ? '#f59e0b' : '#ef4444'),
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      indexAxis: 'y',
+      scales: {
+        x: { beginAtZero: true, max: 100, ticks: { font: { size: 10 }, callback: v => v + '%' }, grid: { color: '#f0f0f0' } },
+        y: { ticks: { font: { size: 10 } }, grid: { display: false } }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: { backgroundColor: 'rgba(0,0,0,0.8)', callbacks: { label: ctx => `命中率: ${ctx.parsed.x.toFixed(1)}%` } }
+      }
+    }
+  }));
+
+  // Chart 6: Daily cache hit rate trend by key
+  const ctx6 = document.getElementById('c_cacheTrend').getContext('2d');
+  costCharts.push(new Chart(ctx6, {
+    type: 'line',
+    data: {
+      labels: dates,
+      datasets: keys.map((k, i) => ({
+        label: k.name,
+        data: dates.map(d => {
+          let hit = 0, total = 0;
+          Object.entries(k.dailyModel[d] || {}).forEach(([, v]) => { hit += v.hit; total += v.hit + v.miss + v.output; });
+          return total === 0 ? null : (hit / total * 100);
+        }),
+        borderColor: KEY_COLORS[i % KEY_COLORS.length],
+        backgroundColor: KEY_COLORS[i % KEY_COLORS.length] + '15',
+        fill: true, tension: 0.3, pointRadius: 2, borderWidth: 2,
+      }))
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+        y: { beginAtZero: true, max: 100, ticks: { font: { size: 10 }, callback: v => v + '%' }, grid: { color: '#f0f0f0' } }
+      },
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, padding: 10, font: { size: 11 } } },
+        tooltip: { mode: 'index', intersect: false, backgroundColor: 'rgba(0,0,0,0.8)', callbacks: { label: ctx => ctx.parsed.y !== null ? `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}%` : '' } }
+      }
+    }
+  }));
+}
+
+// ============================================================
+//  Render Amount Tab — Per Key Detail (tokens + cost + cache)
+// ============================================================
+let amountCharts = [];
+
+function renderAmount() {
+  const container = document.getElementById('amountKeyContainer');
+  const summary = document.getElementById('amountSummary');
+  const keys = buildKeyData(amountData);
+  amountCharts.forEach(destroyChart);
+  amountCharts = [];
+
+  const gHit = keys.reduce((s, k) => s + k.totalHit, 0);
+  const gMiss = keys.reduce((s, k) => s + k.totalMiss, 0);
+  const gOut = keys.reduce((s, k) => s + k.totalOutput, 0);
+  const gReq = keys.reduce((s, k) => s + k.totalRequests, 0);
+  const gTok = gHit + gMiss + gOut;
+  const gCost = keys.reduce((s, k) => s + k.totalCost, 0);
+
+  summary.innerHTML = `
+    <div class="summary-card"><div class="label">API Key 数</div><div class="value highlight">${keys.length}</div></div>
+    <div class="summary-card"><div class="label">总 Token</div><div class="value">${fmtInt(gTok)}</div></div>
+    <div class="summary-card"><div class="label">总费用 (≈CNY)</div><div class="value highlight">${fmtCost(gCost)}</div></div>
+    <div class="summary-card"><div class="label">总请求数</div><div class="value">${fmtInt(gReq)}</div></div>
+  `;
+
+  container.innerHTML = keys.map((kd, idx) => {
+    const tok = totalTokens(kd);
+    const rate = cacheHitRate(kd);
+    const models = [...kd.models].sort();
+    const dates = Object.keys(kd.dailyModel).sort();
+    const modelSubs = models.map((m, mi) => `
+      <div class="chart-card">
+        <h4>📊 ${m} — 每日 Token 明细</h4>
+        <div class="chart-box tall"><canvas id="amtM_${idx}_${mi}"></canvas></div>
+      </div>
+    `).join('');
+    return `
+      <div class="key-section">
+        <div class="key-header" onclick="toggleKey(this)">
+          <span class="arrow">▶</span>
+          <span class="kname">${kd.name}</span>
+          <span class="kbadge">${models.join(', ')}</span>
+          <div class="kstat">
+            <span>请求 <strong>${fmtInt(kd.totalRequests)}</strong></span>
+            <span>Token <strong>${fmtInt(tok)}</strong></span>
+            <span>费用 <strong>≈¥${fmtCost(kd.totalCost)}</strong></span>
+            <span>缓存命中 <strong style="color:#22c55e">${rate.toFixed(1)}%</strong></span>
+            <span><button class="copy-key-btn" onclick="event.stopPropagation();copyKey('${kd.api_key}')">复制 Key</button></span>
+          </div>
+        </div>
+        <div class="key-body">
+          <div class="chart-grid">
+            <div class="chart-card full">
+              <h4>📈 每日 Token 用量趋势（颜色区分模型）</h4>
+              <div class="chart-box tall"><canvas id="amtTok_${idx}"></canvas></div>
+            </div>
+            <div class="chart-card full">
+              <h4>💰 每日费用趋势（颜色区分模型）</h4>
+              <div class="chart-box tall"><canvas id="amtCost_${idx}"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <h4>🧩 缓存命中分析</h4>
+              <div class="chart-box"><canvas id="amtPie_${idx}"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <h4>📈 每日缓存命中率</h4>
+              <div class="chart-box tall"><canvas id="amtHit_${idx}"></canvas></div>
+            </div>
+          </div>
+          <div class="section-title">📊 各模型每日用量明细（Cache Hit / Miss / Output）</div>
+          <div class="model-sub-charts">${modelSubs}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  keys.forEach((kd, idx) => {
+    const dates = Object.keys(kd.dailyModel).sort();
+    const models = [...kd.models].sort();
+
+    // Chart 1: Daily tokens by model (stacked bar)
+    const ctx1 = document.getElementById('amtTok_' + idx).getContext('2d');
+    amountCharts.push(new Chart(ctx1, {
+      type: 'bar',
+      data: {
+        labels: dates,
+        datasets: models.map((m, i) => ({
+          label: m,
+          data: dates.map(d => {
+            const v = kd.dailyModel[d] && kd.dailyModel[d][m];
+            return v ? (v.hit + v.miss + v.output) : 0;
+          }),
+          backgroundColor: KEY_COLORS[i % KEY_COLORS.length] + 'CC',
+          borderColor: KEY_COLORS[i % KEY_COLORS.length],
+          borderWidth: 1,
+        }))
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 } } },
+          y: { stacked: true, beginAtZero: true, ticks: { font: { size: 10 }, callback: v => fmtInt(v) }, grid: { color: '#f0f0f0' } }
+        },
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 12, padding: 10, font: { size: 11 } } },
+          tooltip: { mode: 'index', intersect: false, backgroundColor: 'rgba(0,0,0,0.8)', callbacks: { label: pTL } }
+        }
+      }
+    }));
+
+    // Chart 2: Daily cost by model (stacked bar)
+    const ctx2 = document.getElementById('amtCost_' + idx).getContext('2d');
+    amountCharts.push(new Chart(ctx2, {
+      type: 'bar',
+      data: {
+        labels: dates,
+        datasets: models.map((m, i) => ({
+          label: m,
+          data: dates.map(d => (kd.dailyCost[d] && kd.dailyCost[d][m]) ? kd.dailyCost[d][m] : 0),
+          backgroundColor: KEY_COLORS[i % KEY_COLORS.length] + 'CC',
+          borderColor: KEY_COLORS[i % KEY_COLORS.length],
+          borderWidth: 1,
+        }))
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 } } },
+          y: { stacked: true, beginAtZero: true, ticks: { font: { size: 10 }, callback: v => fmtCost(v) }, grid: { color: '#f0f0f0' } }
+        },
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 12, padding: 10, font: { size: 11 } } },
+          tooltip: { mode: 'index', intersect: false, backgroundColor: 'rgba(0,0,0,0.8)', callbacks: { label: pCL } }
+        }
+      }
+    }));
+
+    // Chart 3: Cache pie
+    const ctx3 = document.getElementById('amtPie_' + idx).getContext('2d');
+    amountCharts.push(new Chart(ctx3, {
+      type: 'doughnut',
+      data: {
+        labels: ['Cache Hit', 'Cache Miss', 'Output'],
+        datasets: [{ data: [kd.totalHit, kd.totalMiss, kd.totalOutput], backgroundColor: ['#22c55e','#f97316','#4f6ef7'], borderWidth: 2, borderColor: '#fafbfc' }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '55%',
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 12, padding: 8, font: { size: 10 } } },
+          tooltip: { backgroundColor: 'rgba(0,0,0,0.8)', callbacks: { label: ctx => { const t = ctx.dataset.data.reduce((a,b)=>a+b,0); return `${ctx.label}: ${fmtInt(ctx.parsed)} (${(ctx.parsed/t*100).toFixed(1)}%)`; } } }
+        }
+      }
+    }));
+
+    // Chart 4: Daily cache hit rate line
+    const ctx4 = document.getElementById('amtHit_' + idx).getContext('2d');
+    amountCharts.push(new Chart(ctx4, {
+      type: 'line',
+      data: {
+        labels: dates,
+        datasets: [{
+          label: '缓存命中率',
+          data: dates.map(d => { let h=0,t=0; Object.entries(kd.dailyModel[d]||{}).forEach(([,v])=>{h+=v.hit;t+=v.hit+v.miss+v.output;}); return t===0?null:(h/t*100); }),
+          borderColor: '#22c55e', backgroundColor: '#22c55e20', fill: true, tension: 0.3, pointRadius: 3, borderWidth: 2,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+          y: { beginAtZero: true, max: 100, ticks: { font: { size: 10 }, callback: v => v+'%' }, grid: { color: '#f0f0f0' } }
+        },
+        plugins: { legend: { display: false }, tooltip: { backgroundColor: 'rgba(0,0,0,0.8)', callbacks: { label: ctx => ctx.parsed.y !== null ? `命中率: ${ctx.parsed.y.toFixed(1)}%` : '' } } }
+      }
+    }));
+
+    // Per-model charts: daily token type breakdown
+    models.forEach((m, mi) => {
+      const ctx5 = document.getElementById(`amtM_${idx}_${mi}`).getContext('2d');
+      amountCharts.push(new Chart(ctx5, {
+        type: 'bar',
+        data: {
+          labels: dates,
+          datasets: [
+            { label: 'Cache Hit', data: dates.map(d => (kd.dailyModel[d]&&kd.dailyModel[d][m])?kd.dailyModel[d][m].hit:0), backgroundColor: '#22c55eCC', borderColor: '#22c55e', borderWidth: 1 },
+            { label: 'Cache Miss', data: dates.map(d => (kd.dailyModel[d]&&kd.dailyModel[d][m])?kd.dailyModel[d][m].miss:0), backgroundColor: '#f97316CC', borderColor: '#f97316', borderWidth: 1 },
+            { label: 'Output', data: dates.map(d => (kd.dailyModel[d]&&kd.dailyModel[d][m])?kd.dailyModel[d][m].output:0), backgroundColor: '#4f6ef7CC', borderColor: '#4f6ef7', borderWidth: 1 },
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: {
+            x: { stacked: true, grid: { display: false }, ticks: { font: { size: 9 } } },
+            y: { stacked: true, beginAtZero: true, ticks: { font: { size: 9 }, callback: v => fmtInt(v) }, grid: { color: '#f0f0f0' } }
+          },
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 10, padding: 6, font: { size: 10 } } },
+            tooltip: { mode: 'index', intersect: false, backgroundColor: 'rgba(0,0,0,0.8)', callbacks: { label: pTL } }
+          }
+        }
+      }));
+    });
+  });
+}
+
+// ============================================================
+//  Accordion toggle & Copy
+// ============================================================
+function toggleKey(header) { header.classList.toggle('open'); header.nextElementSibling.classList.toggle('open'); }
+async function copyKey(key) { try { await navigator.clipboard.writeText(key); } catch { prompt('复制失败，请手动复制:', key); } }
+
+// ============================================================
+//  Zip parsing & Main
+// ============================================================
+let costData = [], amountData = [], fileName = '';
+
+async function processZip(file) {
+  const zip = await JSZip.loadAsync(file);
+  const files = Object.keys(zip.files).filter(f => !zip.files[f].dir);
+  let cf, af;
+  for (const f of files) { const l = f.toLowerCase(); if (l.includes('cost')) cf = f; else if (l.includes('amount')) af = f; }
+  if (!cf && !af) throw new Error('未找到 cost-*.csv 或 amount-*.csv');
+  if (cf) { costData = parseCSV(await zip.files[cf].async('string')); }
+  if (af) { amountData = parseCSV(await zip.files[af].async('string')); }
+}
+
+async function loadFile(file) {
+  const cont = document.getElementById('content'), info = document.getElementById('fileInfo'), up = document.getElementById('uploadArea');
+  try {
+    up.innerHTML = '<div class="loading"><div class="spinner"></div> 正在解析 ZIP 文件...</div>';
+    fileName = file.name; await processZip(file);
+    info.textContent = `📄 ${fileName} · 费用 ${costData.length} 条 · 用量 ${amountData.length} 条`;
+    cont.style.display = 'block';
+    renderCost(); renderAmount(); up.style.display = 'none';
+  } catch (e) {
+    up.innerHTML = `<div class="icon">❌</div><p style="color:#dc2626;">${e.message}</p><p class="sub" style="margin-top:12px;"><button onclick="resetUpload()" style="padding:8px 20px;border:1px solid var(--border);border-radius:6px;background:var(--card);cursor:pointer;font-size:14px;">重新选择</button></p>`;
+    info.textContent = '❌ 加载失败'; console.error(e);
+  }
+}
+
+function resetUpload() {
+  costCharts.forEach(destroyChart); amountCharts.forEach(destroyChart); costCharts = []; amountCharts = [];
+  document.getElementById('content').style.display = 'none'; document.getElementById('uploadArea').style.display = 'block';
+  document.getElementById('uploadArea').innerHTML = `<div class="icon">📁</div><p>点击选择或拖拽 ZIP 文件到此处</p><p class="sub">支持 DeepSeek 账户用量导出的 zip 文件</p><input type="file" id="fileInput" accept=".zip">`;
+  document.getElementById('fileInfo').textContent = '未加载文件'; bindUpload();
+}
+
+function bindUpload() {
+  const area = document.getElementById('uploadArea'), input = document.getElementById('fileInput');
+  area.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => { if (input.files.length) loadFile(input.files[0]); });
+  area.addEventListener('dragover', e => { e.preventDefault(); area.classList.add('dragover'); });
+  area.addEventListener('dragleave', () => area.classList.remove('dragover'));
+  area.addEventListener('drop', e => { e.preventDefault(); area.classList.remove('dragover'); if (e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]); });
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab' + btn.dataset.tab.charAt(0).toUpperCase() + btn.dataset.tab.slice(1)).classList.add('active');
+  });
+});
+
+bindUpload();
+</script>
+</body>
+</html>
